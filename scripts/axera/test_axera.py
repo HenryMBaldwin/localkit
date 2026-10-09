@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import re
 import socket
+import shlex
 import subprocess
 import tarfile
 import tempfile
@@ -53,7 +54,7 @@ class AxeraTests(unittest.TestCase):
         connection.run.return_value = (b'', 0)
         with patch.object(axera, 'transfer') as transfer:
             with self.assertRaisesRegex(RuntimeError, 'existing /opt/app_init.sh'):
-                axera.install(connection, '10.0.0.11', b'unused')
+                axera.install(connection, b'unused')
             transfer.assert_not_called()
 
     def test_route_probe_cleans_up_on_failure(self):
@@ -69,6 +70,39 @@ class AxeraTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'already in use'):
             axera.probe_routes(connection)
         self.assertEqual(connection.run.call_count, 1)
+
+    def test_telnet_transfer_preserves_binary_data_and_private_permissions(self):
+        paths = []
+        def run(command, check=True):
+            if command.startswith('sha256sum '):
+                path = Path(shlex.split(command)[1])
+                paths.append(path)
+                return hashlib.sha256(path.read_bytes()).hexdigest().encode(), 0
+            result = subprocess.run(['sh', '-c', command], capture_output=True, check=check)
+            return result.stdout, result.returncode
+        connection = Mock()
+        connection.run.side_effect = run
+        payload = bytes(range(256)) * 8
+        path = Path(axera.transfer(connection, payload))
+        try:
+            self.assertEqual(path.read_bytes(), payload)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        finally:
+            path.unlink()
+
+    def test_telnet_transfer_removes_a_corrupted_upload(self):
+        paths = []
+        def run(command, check=True):
+            if command.startswith('sha256sum '):
+                paths.append(Path(shlex.split(command)[1]))
+                return b'0' * 64, 0
+            result = subprocess.run(['sh', '-c', command], capture_output=True, check=check)
+            return result.stdout, result.returncode
+        connection = Mock()
+        connection.run.side_effect = run
+        with self.assertRaisesRegex(RuntimeError, 'checksum does not match'):
+            axera.transfer(connection, b'payload')
+        self.assertFalse(paths[0].exists())
 
     def test_tar_path_traversal_and_symlinks_are_rejected(self):
         for name, member_type in [('../app_init.sh', tarfile.REGTYPE), ('boot.sh', tarfile.SYMTYPE)]:

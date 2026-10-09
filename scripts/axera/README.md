@@ -60,6 +60,7 @@ python3 scripts/axera/axera.py install --host 192.168.1.20 --bundle .axera/deplo
 ```
 
 Installation saves a backup before writing the boot override and refuses unknown firmware or an existing override.
+The bundle transfers through the authenticated Telnet session and is checked against its SHA-256 digest.
 Reboot the feeder to activate the adapter. No reboot is issued by the installer.
 Confirm the feeder reconnects to local MQTT, the camera opens at `http://localhost:1984`, and its next scheduled meal dispenses.
 Camera endpoints are accessible on the feeder LAN.

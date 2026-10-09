@@ -3,7 +3,6 @@ import argparse
 import base64
 import getpass
 import hashlib
-import http.server
 import io
 import ipaddress
 import json
@@ -17,7 +16,6 @@ import ssl
 import subprocess
 import sys
 import tarfile
-import threading
 import time
 
 HERE = Path(globals().get('__file__', '/tmp/axera-worker.py')).resolve().parent
@@ -246,31 +244,14 @@ def backup(connection):
         connection.run('rm -f /tmp/localkit-backup.tar.gz', check=False)
 
 
-def transfer(connection, host, payload):
-    token = secrets.token_hex(24)
-    expected_path = '/' + token
-    source_ip = connection.socket.getsockname()[0]
-
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-            if self.client_address[0] != host or self.path != expected_path:
-                self.send_error(404)
-                return
-            self.send_response(200)
-            self.send_header('Content-Length', str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
-
-        def log_message(self, *args):
-            pass
-
-    server = http.server.ThreadingHTTPServer((source_ip, 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    path = '/tmp/localkit-' + token + '.tar.gz'
+def transfer(connection, payload):
+    path = '/tmp/localkit-' + secrets.token_hex(24) + '.tar.gz'
+    encoded = base64.b64encode(payload).decode('ascii')
     try:
-        url = 'http://' + source_ip + ':' + str(server.server_port) + expected_path
-        connection.run('wget -q -O ' + path + ' ' + shlex.quote(url))
+        connection.run('umask 077; : > ' + path)
+        for offset in range(0, len(encoded), 512):
+            chunk = encoded[offset:offset + 512]
+            connection.run("printf '%s' " + shlex.quote(chunk) + ' | base64 -d >> ' + path)
         digest = connection.run('sha256sum ' + path)[0].decode().split()[0]
         if digest != hashlib.sha256(payload).hexdigest():
             raise RuntimeError('Transferred bundle checksum does not match')
@@ -278,19 +259,16 @@ def transfer(connection, host, payload):
     except Exception:
         connection.run('rm -f ' + path, check=False)
         raise
-    finally:
-        server.shutdown()
-        server.server_close()
 
 
-def install(connection, host, payload):
+def install(connection, payload):
     if connection.run('test -e ' + HOOK, check=False)[1] == 0:
         raise RuntimeError('An existing /opt/app_init.sh must be reviewed before installation')
     if connection.run('test -e ' + BASE, check=False)[1] == 0:
         raise RuntimeError('An existing adapter installation must be removed before installation')
     bundle_files(payload)
     probe_routes(connection)
-    temporary = transfer(connection, host, payload)
+    temporary = transfer(connection, payload)
     try:
         connection.run('mkdir -m 700 ' + BASE)
         connection.run('tar -xzf ' + temporary + ' -C ' + BASE)
@@ -332,7 +310,7 @@ def worker(request):
         if action == 'backup':
             return {'archive': base64.b64encode(backup(connection)).decode()}
         if action == 'install':
-            install(connection, request['host'], base64.b64decode(request['bundle']))
+            install(connection, base64.b64decode(request['bundle']))
             return {'reboot_required': True}
         raise RuntimeError('Unknown worker action')
     finally:
