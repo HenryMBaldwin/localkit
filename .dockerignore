@@ -9,3 +9,5 @@ scripts/axera/__pycache__
 .phpunit.cache
 .DS_Store
 **/._*
+
+**/node_modules

@@ -24,7 +24,7 @@ class DevOnlyIotDeviceInfoResource extends PetkitHttpResource
             $mqtt = 'noresolv.localkit.io';
         }
 
-        return [
+        $result = [
             'ali' => [
                 'id' => $this->petkit_id,
                 'deviceName' => sprintf('d_%s_%s', $this->device_type, $this->serial_number),
@@ -38,6 +38,16 @@ class DevOnlyIotDeviceInfoResource extends PetkitHttpResource
                 'regionId' => $region
             ]
         ];
+        if ($this->serial_number === config('axera.serial') && config('axera.mqtt_host')) {
+            $result['petkit'] = array_merge($result['ali'], [
+                'iotPlatform' => 'PETKIT',
+                'mqttHost' => 'ssl://'.config('axera.mqtt_host').':443',
+                'standbyMqttHost' => 'ssl://'.config('axera.mqtt_host').':443',
+                'mqttIp' => 'ssl://'.config('petkit.local_ip').':443',
+                'standbyMqttIp' => 'ssl://'.config('petkit.local_ip').':443',
+            ]);
+        }
+        return $result;
     }
 
 }

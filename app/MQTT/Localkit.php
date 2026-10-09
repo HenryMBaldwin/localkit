@@ -29,7 +29,7 @@ class Localkit
     {
         $onlineDevices = [];
         foreach ($message as $device) {
-            if(!Str::contains($device, '|timestamp=')) {
+            if (!Str::contains($device, '|timestamp=') && $device !== 'd_d4h_'.config('axera.serial')) {
                 continue;
             }
 

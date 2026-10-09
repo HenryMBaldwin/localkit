@@ -17,6 +17,9 @@ class DevSignupController extends Controller
 
     public function __invoke(string $deviceType, Request $request)
     {
+        if ($deviceType === 'd4h' && $request->get('sn') === config('axera.serial') && config('axera.serial')) {
+            return new DevSignupResource(Device::whereSerialNumber(config('axera.serial'))->firstOrFail());
+        }
 
 
         $update = [

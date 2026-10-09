@@ -2,12 +2,13 @@
 
 This adapter supports the Axera ARM D4H running firmware 895 with the hashes in `profiles/d4h-895.json`.
 It installs an `/opt/app_init.sh` override, a local MQTT certificate, hostname mapping, and the native camera server.
-The Docker host runs go2rtc 1.9.14.
-Firmware images and encrypted device settings remain unchanged. The stock feeding controller and watchdog remain active.
+The Docker host runs go2rtc 1.9.14, a local HTTP/TLS gateway, and an MQTT 5 to MQTT 3.1.1 bridge.
+Firmware images remain unchanged. The stock feeding controller and watchdog remain active.
+Registration preserves the imported HTTP identity, timezone, and native server settings.
 Boot activation, local MQTT reconnection, and scheduled dispensing require an installation test.
 
 IPv4 prohibit routes cover both halves of the address space. IPv6 receives equivalent routes when enabled.
-The connected LAN route remains reachable. Only the existing MQTT hostname is redirected; cloud HTTP endpoints remain blocked.
+The connected LAN route remains reachable. Native API and MQTT hostnames resolve to the local gateway. The gateway permits registration, connection bootstrap, time synchronization, and heartbeat requests. Other HTTP requests receive 403.
 The feeder retains its cached feeding schedules. Those schedules are not imported into the web interface.
 
 ## Requirements
@@ -49,7 +50,7 @@ ssh -L 8082:127.0.0.1:8082 -L 1984:127.0.0.1:1984 user@server
 
 Then visit `http://localhost:8082`. `setup.py --web-bind` can bind it to a private interface instead.
 `--camera-public-host` sets the camera address used by the browser; the default follows `--web-bind`.
-MQTT uses port 443 on the specified LAN address. This deployment uses one server LAN address and does not require macvlan.
+The device gateway binds ports 80, 443, and 8883 on the specified LAN address. This deployment uses one server LAN address and does not require macvlan.
 
 ## Install
 
@@ -80,5 +81,7 @@ Rollback retains `/opt/localkit-axera`. Remove that directory after reboot befor
 
 ```sh
 python3 -m unittest discover -s scripts/axera -p 'test_*.py'
-php artisan test --filter ImportAxeraTest
+php artisan test --filter 'AxeraBootstrapTest|ImportAxeraTest|AxeraCameraRelayTest'
+npm --prefix scripts/axera/mqtt-bridge ci
+npm --prefix scripts/axera/mqtt-bridge test
 ```

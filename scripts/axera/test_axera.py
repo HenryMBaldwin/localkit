@@ -7,6 +7,8 @@ import re
 import socket
 import shlex
 import subprocess
+import sys
+import ssl
 import tarfile
 import tempfile
 import threading
@@ -21,8 +23,54 @@ class AxeraTests(unittest.TestCase):
         self.profile = json.loads((axera.HERE / 'profiles/d4h-895.json').read_text())
 
     def metadata(self):
-        return {**self.profile, 'mqtt_host': 'fixture.example', 'address': '10.0.0.11',
+        return {**self.profile, 'mqtt_host': 'fixture.example', 'mqtt_subdomain': 'fixture-product', 'address': '10.0.0.11',
                 'lan_cidr': '10.0.0.0/24', 'hosts': '127.0.0.1 localhost\n10.0.0.99 fixture.example\n'}
+
+    def test_bootstrap_hostnames_cover_native_and_aliyun_mqtt(self):
+        self.assertEqual(axera.local_hostnames(self.metadata()), [
+            'fixture.example', 'fixture-product.iot-as-mqtt.eu-central-1.aliyuncs.com',
+            'api.petkt.com', 'api-eu.petkt.com', 'api.eu-pet.com',
+        ])
+        metadata = self.metadata()
+        metadata['mqtt_subdomain'] = 'unsafe\\nvalue'
+        with self.assertRaises(RuntimeError):
+            axera.local_hostnames(metadata)
+
+    def test_generated_deployment_certificates_cover_native_bootstrap_and_mqtt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            metadata = {**self.metadata(), 'serial_number': 'TESTSERIAL', 'http_secret': 'http-fixture', 'server_info': {'apiServers': ['https://native.example/6/']}}
+            source = root / 'device.json'
+            source.write_text(json.dumps(metadata))
+            output = root / 'deployment'
+            subprocess.run([sys.executable, str(axera.HERE / 'setup.py'), '--metadata', str(source),
+                            '--server-ip', '10.0.0.10', '--output', str(output)], check=True, capture_output=True)
+            server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            server_context.load_cert_chain(output / 'tls/broker.crt', output / 'tls/broker.key')
+            for hostname in axera.local_hostnames(metadata):
+                client_context = ssl.create_default_context(cafile=output / 'tls/ca.crt')
+                client_in, client_out, server_in, server_out = [ssl.MemoryBIO() for _ in range(4)]
+                client = client_context.wrap_bio(client_in, client_out, server_hostname=hostname)
+                server = server_context.wrap_bio(server_in, server_out, server_side=True)
+                for _ in range(10):
+                    try:
+                        client.do_handshake()
+                        break
+                    except ssl.SSLWantReadError:
+                        server_in.write(client_out.read())
+                    try:
+                        server.do_handshake()
+                    except ssl.SSLWantReadError:
+                        pass
+                    client_in.write(server_out.read())
+                self.assertIsNotNone(client.getpeercert())
+            files = axera.bundle_files((output / 'device-bundle.tar.gz').read_bytes())
+            for hostname in axera.local_hostnames(metadata):
+                self.assertIn(hostname, files['hosts'].decode())
+            compose = json.loads((output / 'compose.json').read_text())
+            self.assertEqual(compose['services']['localkit']['ports'], ['127.0.0.1:8082:80'])
+            self.assertEqual(compose['services']['localkit']['environment']['AXERA_HTTP_SECRET'], 'http-fixture')
+            self.assertEqual(json.loads(compose['services']['localkit']['environment']['AXERA_SERVER_INFO']), metadata['server_info'])
 
     def test_every_firmware_file_must_match(self):
         for path in self.profile['sha256']:

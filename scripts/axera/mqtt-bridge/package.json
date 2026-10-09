@@ -1,0 +1,17 @@
+{
+  "name": "localkit-axera-mqtt-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "mqtt-packet": "9.0.2"
+  },
+  "devDependencies": {
+    "aedes": "0.51.3",
+    "mqtt": "5.10.4"
+  }
+}

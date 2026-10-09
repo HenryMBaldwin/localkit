@@ -17,6 +17,11 @@ class DevSignupResource extends PetkitHttpResource
      */
     public function toArray(Request $request): array
     {
-        return $this->resource->definition()->toDevSignup();
+        $result = $this->resource->definition()->toDevSignup();
+        if ($this->serial_number === config('axera.serial')) {
+            $result['timezone'] = (float) $this->timezone;
+            $result['secret'] = config('axera.http_secret');
+        }
+        return $result;
     }
 }

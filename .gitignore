@@ -29,3 +29,5 @@ storage/localkit.sqlite
 
 /.axera/
 /scripts/axera/__pycache__/
+
+/scripts/axera/mqtt-bridge/node_modules/

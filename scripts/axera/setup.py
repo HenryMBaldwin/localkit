@@ -8,7 +8,7 @@ from pathlib import Path
 import secrets
 import subprocess
 
-from axera import HERE, HOSTNAME, make_bundle, private_write, validate_profile
+from axera import HERE, HOSTNAME, local_hostnames, make_bundle, private_write, validate_profile
 
 
 def main():
@@ -23,6 +23,10 @@ def main():
     os.umask(0o077)
     metadata = json.loads(args.metadata.read_text())
     validate_profile(metadata, json.loads((HERE / 'profiles/d4h-895.json').read_text()))
+    if not isinstance(metadata.get('http_secret'), str) or not metadata['http_secret']:
+        parser.error('Native HTTP secret is missing; export fresh device metadata')
+    if not isinstance(metadata.get('server_info'), dict) or not metadata['server_info'].get('apiServers'):
+        parser.error('Native server settings are missing; export fresh device metadata')
     server = ipaddress.IPv4Address(args.server_ip)
     ipaddress.IPv4Address(args.web_bind)
     if server not in ipaddress.ip_network(metadata['lan_cidr']) or str(server) == metadata['address']:
@@ -42,13 +46,15 @@ def main():
         subprocess.run(['openssl', *arguments], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     openssl('req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-sha256', '-days', '3650',
             '-subj', '/CN=Localkit Local CA', '-addext', 'basicConstraints=critical,CA:TRUE',
-            '-addext', 'keyUsage=critical,keyCertSign,cRLSign', '-keyout', str(tls / 'ca.key'), '-out', str(tls / 'ca.crt'))
+            '-addext', 'keyUsage=critical,keyCertSign,cRLSign', '-addext', 'subjectKeyIdentifier=hash', '-keyout', str(tls / 'ca.key'), '-out', str(tls / 'ca.crt'))
     openssl('req', '-new', '-newkey', 'rsa:2048', '-nodes', '-subj', '/CN=localkit-broker',
             '-keyout', str(tls / 'broker.key'), '-out', str(tls / 'broker.csr'))
-    extensions = 'basicConstraints=critical,CA:FALSE\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:localkit-broker,DNS:' + metadata['mqtt_host'] + ',IP:' + args.server_ip + '\n'
+    extensions = 'basicConstraints=critical,CA:FALSE\nextendedKeyUsage=serverAuth\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\nsubjectAltName=DNS:localkit-broker,' + ','.join('DNS:' + name for name in local_hostnames(metadata)) + ',IP:' + args.server_ip + '\n'
     private_write(tls / 'extensions', extensions.encode())
     openssl('x509', '-req', '-in', str(tls / 'broker.csr'), '-CA', str(tls / 'ca.crt'), '-CAkey', str(tls / 'ca.key'),
             '-CAcreateserial', '-CAserial', str(tls / 'ca.srl'), '-sha256', '-days', '825', '-extfile', str(tls / 'extensions'), '-out', str(tls / 'broker.crt'))
+    private_write(tls / 'proxy.pem', (tls / 'broker.crt').read_bytes() + (tls / 'broker.key').read_bytes())
+    private_write(directory / 'haproxy.cfg', (HERE / 'haproxy.cfg').read_bytes())
     bundle = make_bundle(metadata, args.server_ip, (tls / 'ca.crt').read_bytes())
     private_write(directory / 'device-bundle.tar.gz', bundle)
     private_write(directory / 'device.json', args.metadata.read_bytes())
@@ -70,6 +76,8 @@ def main():
                     'LOCALKIT_HOMEASSISTANT_ENABLE': 'false', 'LOCALKIT_STORAGE_ENABLE': 'false',
                     'LOCALKIT_BROKER_HOST': 'localkit-broker', 'LOCALKIT_BROKER_PORT': '443',
                     'PETKIT_LOCAL_IP': args.server_ip, 'BYPASS_AUTH': 'false',
+                    'AXERA_SERVER_INFO': json.dumps(metadata['server_info']),
+                    'AXERA_SERIAL': metadata['serial_number'], 'AXERA_HTTP_SECRET': metadata['http_secret'], 'AXERA_MQTT_HOST': metadata['mqtt_host'],
                     'GO2RTC_RELAY_SERIAL': metadata['serial_number'], 'GO2RTC_RELAY_HOST': 'go2rtc',
                     'GO2RTC_RELAY_PUBLIC_HOST': args.camera_public_host or (args.server_ip if args.web_bind == '0.0.0.0' else args.web_bind),
                 },
@@ -79,9 +87,25 @@ def main():
             },
             'localkit-broker': {
                 'image': 'ghcr.io/dwyschka/localkit-broker:main',
-                'ports': [args.server_ip + ':443:443'],
                 'environment': {'LOCALKIT': 'http://localkit'},
                 'volumes': ['./tls/broker.crt:/app/certs/broker.crt:ro', './tls/broker.key:/app/certs/broker.key:ro'],
+                'restart': 'unless-stopped',
+            },
+            'device-gateway': {
+                'image': 'haproxy:3.0-alpine@sha256:56b887da77428b7a6621e59e480cdbd330cc805c22d3cedb66ceea76ffdea2c6',
+                'user': str(os.getuid()) + ':' + str(os.getgid()),
+                'cap_drop': ['ALL'], 'cap_add': ['NET_BIND_SERVICE'], 'read_only': True,
+                'ports': [args.server_ip + ':80:80', args.server_ip + ':443:443', args.server_ip + ':8883:8883'],
+                'volumes': ['./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro', './tls/proxy.pem:/tls/proxy.pem:ro'],
+                'depends_on': ['localkit', 'mqtt-bridge'],
+                'restart': 'unless-stopped',
+            },
+            'mqtt-bridge': {
+                'build': {'context': str(HERE / 'mqtt-bridge')},
+                'user': str(os.getuid()) + ':' + str(os.getgid()),
+                'cap_drop': ['ALL'], 'read_only': True,
+                'volumes': ['./tls/ca.crt:/tls/ca.crt:ro'],
+                'depends_on': ['localkit-broker'],
                 'restart': 'unless-stopped',
             },
             'go2rtc': {
@@ -93,6 +117,8 @@ def main():
         },
         'volumes': {'database': {}, 'storage': {}, 'logs': {}},
     }
+    for service in compose['services'].values():
+        service['labels'] = {'com.centurylinklabs.watchtower.enable': 'false'}
     private_write(directory / 'compose.json', json.dumps(compose, indent=2).encode())
     print('Deployment prepared in ' + str(directory))
 

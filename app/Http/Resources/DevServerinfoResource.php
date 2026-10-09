@@ -18,6 +18,10 @@ class DevServerinfoResource extends PetkitHttpResource
     public function toArray(Request $request): array
     {
 
+        if ($this->resource->serial_number === config('axera.serial') && config('axera.server_info.apiServers')) {
+            return config('axera.server_info');
+        }
+
         $apiServer = 'http://api.eu-pet.com/6/';
         if($this->resource->isNextGen()) {
             $apiServer = 'https://api-eu.petkt.com/6/';

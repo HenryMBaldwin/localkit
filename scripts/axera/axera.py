@@ -192,6 +192,8 @@ def inspect(connection):
         'mqtt_subdomain': fields.get('usr.iot_keys.product_key', ''),
         'secret': fields.get('usr.iot_keys.device_secret', ''),
         'petkit_id': user.get('idInfo', {}).get('dev_id'),
+        'http_secret': user.get('idInfo', {}).get('dev_srt'),
+        'server_info': user.get('serverInfo', {}),
         'locale': user.get('user_info', {}).get('locale', 'en_US'),
         'timezone': float(fields.get('usr.user_info.timezone', '0')),
         'app_conf': user.get('app_conf', {}),
@@ -359,6 +361,15 @@ def validate_bundle(payload):
             raise RuntimeError('Boot scripts do not match this installer')
 
 
+def local_hostnames(metadata):
+    hostname = metadata['mqtt_host']
+    product = metadata['mqtt_subdomain']
+    if not HOSTNAME.fullmatch(hostname) or not re.fullmatch(r'[A-Za-z0-9-]+', product):
+        raise RuntimeError('Invalid MQTT hostname or product key')
+    return [hostname, product + '.iot-as-mqtt.eu-central-1.aliyuncs.com',
+            'api.petkt.com', 'api-eu.petkt.com', 'api.eu-pet.com']
+
+
 def make_bundle(metadata, server_ip, ca):
     validate_profile(metadata, json.loads((HERE / 'profiles/d4h-895.json').read_text()))
     address = ipaddress.ip_address(server_ip)
@@ -366,17 +377,15 @@ def make_bundle(metadata, server_ip, ca):
         raise RuntimeError('MQTT server must be on the feeder LAN')
     if address == ipaddress.ip_address(metadata['address']):
         raise RuntimeError('MQTT server cannot be the feeder itself')
-    hostname = metadata['mqtt_host']
-    if not HOSTNAME.fullmatch(hostname):
-        raise RuntimeError('Invalid MQTT hostname')
+    hostnames = local_hostnames(metadata)
     ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT).load_verify_locations(cadata=ca.decode('ascii'))
     hosts = '\n'.join(line for line in metadata.get('hosts', '127.0.0.1 localhost\n').splitlines()
-                      if hostname.lower() not in [part.lower() for part in line.split('#', 1)[0].split()[1:]])
+                      if not set(hostnames).intersection(part.lower() for part in line.split('#', 1)[0].split()[1:]))
     files = {
         'boot.sh': (HERE / 'device/boot.sh').read_bytes(),
         'camera.sh': (HERE / 'device/camera.sh').read_bytes(),
         'ca.crt': ca,
-        'hosts': (hosts + '\n' + server_ip + ' ' + hostname + '\n').encode(),
+        'hosts': (hosts + '\n' + server_ip + ' ' + ' '.join(hostnames) + '\n').encode(),
     }
     files['checksums'] = ''.join(hashlib.sha256(value).hexdigest() + '  ' + name + '\n' for name, value in files.items()).encode()
     result = io.BytesIO()
