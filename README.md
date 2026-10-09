@@ -37,3 +37,4 @@ Localkit integrates with Home Assistant over MQTT, automatically exposing your P
 ## Documentation
 
 For full setup instructions, the complete list of exposed entities, and detailed documentation, visit [localkit.io](https://localkit.io).
+For Axera ARM YumShare Solo firmware 895, see the [Axera adapter instructions](scripts/axera/README.md).

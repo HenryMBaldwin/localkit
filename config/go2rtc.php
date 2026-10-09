@@ -1,7 +1,10 @@
 <?php
 return [
-    // Every HasCamera device runs its own go2rtc server on its local IP.
-    // Streams are served directly from the device, not from a central instance.
+    'relay' => [
+        'serial' => env('GO2RTC_RELAY_SERIAL'),
+        'host' => env('GO2RTC_RELAY_HOST'),
+        'public_host' => env('GO2RTC_RELAY_PUBLIC_HOST'),
+    ],
     'port' => env('GO2RTC_DEVICE_PORT', 1984),
     'stream' => env('GO2RTC_DEVICE_STREAM', 'camera'),
 

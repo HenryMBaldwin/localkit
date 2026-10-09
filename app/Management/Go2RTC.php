@@ -6,15 +6,11 @@ use Throwable;
 use App\Models\Device;
 use Illuminate\Support\Facades\Http;
 
-/**
- * Every HasCamera device runs its own go2rtc server on its local IP. This client
- * builds the URLs to reach that per-device server - there is no central go2rtc.
- */
 class Go2RTC
 {
     public function streamUrl(Device $device, ?string $stream = null): string
     {
-        return $this->url($device, '/stream.html', $stream ?? config('go2rtc.stream'));
+        return $this->url($device, '/stream.html', $stream ?? config('go2rtc.stream'), public: true);
     }
 
     public function frameUrl(Device $device, ?string $stream = null): string
@@ -102,11 +98,15 @@ class Go2RTC
         return $urls;
     }
 
-    private function url(Device $device, string $path, string $stream): string
+    private function url(Device $device, string $path, string $stream, bool $public = false): string
     {
+        $host = $this->deviceIp($device);
+        if ($public && $this->isRelay($device)) {
+            $host = config('go2rtc.relay.public_host') ?: $host;
+        }
         return sprintf(
             'http://%s:%d%s?src=%s',
-            $this->deviceIp($device),
+            $host,
             config('go2rtc.port'),
             $path,
             $stream
@@ -115,6 +115,14 @@ class Go2RTC
 
     private function deviceIp(Device $device): ?string
     {
+        if ($this->isRelay($device) && config('go2rtc.relay.host')) {
+            return config('go2rtc.relay.host');
+        }
         return $device->configuration['states']['ipAddress'] ?? null;
+    }
+
+    private function isRelay(Device $device): bool
+    {
+        return config('go2rtc.relay.serial') !== null && $device->serial_number === config('go2rtc.relay.serial');
     }
 }

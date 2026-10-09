@@ -1,0 +1,14 @@
+{
+  "model": "D4H",
+  "device_type": "d4h",
+  "firmware": "895",
+  "architecture": "armv7l",
+  "cpu": "Axera_chip",
+  "sha256": {
+    "/app/bin/ctrl": "9f9853502db8e5ba4e1f7cbd3c54720c072c05d384e87cda239c6dc0c3c1cafe",
+    "/app/bin/tserver": "246a847214db8c7b6ec117488197b7a44231b472fbda5df2bd52ed91e6a53cc0",
+    "/app/script/app_init.sh": "e584881ea156b9f82a65679336bc6e4e22a7017085431a6c57db539ef830e034",
+    "/app/script/app_start.sh": "4cde4a68aeece0c0c2e0219e3841abe9195da823a329fe05009f8c5b80e7066f",
+    "/soc/scripts/system_init.sh": "a2573ebed4af107df2c6d17bbd1af03e015b21453dabc7e1edc364584bb32e53"
+  }
+}
